@@ -1,0 +1,217 @@
+"""Unit tests for profile_lib.py - stdlib unittest only, no dependencies.
+
+Run with:
+    python3 -m unittest scripts.test_profile_lib -v
+(from skills/ai-learning-companion/), or
+    python3 test_profile_lib.py -v
+(from scripts/).
+"""
+
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import profile_lib as lib
+
+
+def terms(n, date="2026-01-01"):
+    return {"term%d" % i: date for i in range(n)}
+
+
+class ThresholdLevelTest(unittest.TestCase):
+    def test_boundaries(self):
+        self.assertEqual(lib.threshold_level(0), "beginner")
+        self.assertEqual(lib.threshold_level(4), "beginner")
+        self.assertEqual(lib.threshold_level(5), "intermediate")
+        self.assertEqual(lib.threshold_level(19), "intermediate")
+        self.assertEqual(lib.threshold_level(20), "advanced")
+        self.assertEqual(lib.threshold_level(100), "advanced")
+
+
+class MigrateTest(unittest.TestCase):
+    def test_old_shape_gets_new_fields_with_sane_defaults(self):
+        old = {"known_terms": terms(7), "sessions_taught": 3}
+        new_state, changed = lib.migrate(old)
+
+        self.assertTrue(changed)
+        self.assertEqual(new_state["known_terms"], old["known_terms"])
+        self.assertEqual(new_state["sessions_taught"], 3)
+        self.assertEqual(new_state["level"], "intermediate")  # 7 terms
+        self.assertEqual(new_state["level_history"], [])
+        self.assertEqual(new_state["preferences"], {})
+        self.assertEqual(new_state["task_type_counts"], {})
+        self.assertIsNone(new_state["level_watch"])
+
+    def test_never_overwrites_known_terms_or_sessions_taught(self):
+        old = {
+            "known_terms": {"closures": "2025-01-01"},
+            "sessions_taught": 42,
+            "level": "advanced",
+        }
+        new_state, _changed = lib.migrate(old)
+        self.assertEqual(new_state["known_terms"], {"closures": "2025-01-01"})
+        self.assertEqual(new_state["sessions_taught"], 42)
+        self.assertEqual(new_state["level"], "advanced")  # not re-derived
+
+    def test_does_not_mutate_input(self):
+        old = {"known_terms": {}, "sessions_taught": 0}
+        lib.migrate(old)
+        self.assertNotIn("level", old)
+
+    def test_already_new_shape_is_a_noop(self):
+        state = lib.default_state()
+        new_state, changed = lib.migrate(state)
+        self.assertFalse(changed)
+        self.assertEqual(new_state, state)
+
+
+class ComputeLevelTest(unittest.TestCase):
+    def test_no_change_when_raw_matches_current(self):
+        state = {
+            "known_terms": terms(2),
+            "level": "beginner",
+            "level_history": [],
+            "level_watch": None,
+        }
+        result = lib.compute_level(state)
+        self.assertEqual(result["level"], "beginner")
+        self.assertFalse(result["changed"])
+        self.assertIsNone(result["level_watch"])
+
+    def test_single_session_crossing_threshold_does_not_change_level(self):
+        state = {
+            "known_terms": terms(5),  # raw = intermediate
+            "level": "beginner",
+            "level_history": [],
+            "level_watch": None,
+        }
+        result = lib.compute_level(state)
+
+        self.assertEqual(result["level"], "beginner")  # unchanged
+        self.assertFalse(result["changed"])
+        self.assertEqual(
+            result["level_watch"], {"candidate": "intermediate", "count": 1}
+        )
+        self.assertEqual(result["level_history"], [])
+
+    def test_two_consecutive_sessions_confirm_the_change(self):
+        state = {
+            "known_terms": terms(5),
+            "level": "beginner",
+            "level_history": [],
+            "level_watch": None,
+        }
+        first = lib.compute_level(state, today="2026-02-01")
+
+        state_after_first = dict(state)
+        state_after_first["level_watch"] = first["level_watch"]
+        second = lib.compute_level(state_after_first, today="2026-02-02")
+
+        self.assertEqual(second["level"], "intermediate")
+        self.assertTrue(second["changed"])
+        self.assertIsNone(second["level_watch"])
+        self.assertEqual(len(second["level_history"]), 1)
+        self.assertEqual(second["level_history"][0]["level"], "intermediate")
+        self.assertEqual(second["level_history"][0]["changedAt"], "2026-02-02")
+
+    def test_watch_resets_when_candidate_reverses_before_count_2(self):
+        # Step 1: 4 terms, level=beginner, raw agrees -> no watch.
+        state = {
+            "known_terms": terms(4),
+            "level": "beginner",
+            "level_history": [],
+            "level_watch": None,
+        }
+        step1 = lib.compute_level(state)
+        self.assertIsNone(step1["level_watch"])
+
+        # Step 2: term count crosses to 5 -> raw=intermediate, starts a
+        # candidate watch at count 1. Level itself does not move yet.
+        state_5_terms = dict(state)
+        state_5_terms["known_terms"] = terms(5)
+        state_5_terms["level_watch"] = step1["level_watch"]
+        step2 = lib.compute_level(state_5_terms)
+        self.assertEqual(
+            step2["level_watch"], {"candidate": "intermediate", "count": 1}
+        )
+        self.assertFalse(step2["changed"])
+
+        # Step 3 (the reversal): count drops back to 4, matching the
+        # still-current "beginner" level. This must clear the watch
+        # entirely, not just leave it at count 1.
+        state_back_to_4 = dict(state)
+        state_back_to_4["known_terms"] = terms(4)
+        state_back_to_4["level"] = "beginner"
+        state_back_to_4["level_watch"] = step2["level_watch"]
+        step3 = lib.compute_level(state_back_to_4)
+        self.assertIsNone(step3["level_watch"])
+        self.assertFalse(step3["changed"])
+        self.assertEqual(step3["level"], "beginner")
+
+        # Step 4: count goes back up to 5 again. If the watch had truly
+        # reset in step 3 (rather than silently keeping count=1 or
+        # jumping straight to committed), this must restart at count 1,
+        # NOT commit the change yet.
+        state_5_terms_again = dict(state)
+        state_5_terms_again["known_terms"] = terms(5)
+        state_5_terms_again["level"] = "beginner"
+        state_5_terms_again["level_watch"] = step3["level_watch"]
+        step4 = lib.compute_level(state_5_terms_again)
+        self.assertEqual(
+            step4["level_watch"], {"candidate": "intermediate", "count": 1}
+        )
+        self.assertFalse(step4["changed"])
+        self.assertEqual(step4["level"], "beginner")
+
+    def test_watch_restarts_when_a_different_candidate_appears(self):
+        state = {
+            "known_terms": terms(5),  # raw = intermediate
+            "level": "beginner",
+            "level_history": [],
+            "level_watch": None,
+        }
+        first = lib.compute_level(state)
+        self.assertEqual(first["level_watch"]["candidate"], "intermediate")
+
+        # Now a big jump to 20+ terms (raw = advanced) arrives while the
+        # watch was still tracking "intermediate" at count 1. The new
+        # candidate differs, so it must restart at count 1, not build on
+        # the old candidate's count.
+        state_jump = dict(state)
+        state_jump["known_terms"] = terms(25)
+        state_jump["level_watch"] = first["level_watch"]
+        second = lib.compute_level(state_jump)
+        self.assertEqual(
+            second["level_watch"], {"candidate": "advanced", "count": 1}
+        )
+        self.assertFalse(second["changed"])
+
+
+class RecentConceptsTest(unittest.TestCase):
+    def test_orders_by_date_descending(self):
+        known = {"a": "2026-01-01", "b": "2026-02-01", "c": "2026-01-15"}
+        self.assertEqual(lib.recent_concepts(known), ["b", "c", "a"])
+
+    def test_same_date_ties_break_alphabetically_by_term(self):
+        known = {"zeta": "2026-01-01", "alpha": "2026-01-01", "mid": "2026-01-01"}
+        self.assertEqual(lib.recent_concepts(known), ["alpha", "mid", "zeta"])
+
+    def test_respects_limit(self):
+        known = terms(10, date="2026-01-01")
+        self.assertEqual(len(lib.recent_concepts(known, limit=3)), 3)
+
+
+class BuildContextCardTest(unittest.TestCase):
+    def test_shape(self):
+        state = lib.default_state()
+        state["known_terms"] = {"closures": "2026-01-01"}
+        state["level"] = "beginner"
+        card = lib.build_context_card(state)
+        self.assertEqual(set(card.keys()), {"level", "note", "recent_concepts"})
+        self.assertEqual(card["level"], "beginner")
+        self.assertEqual(card["recent_concepts"], ["closures"])
+
+
+if __name__ == "__main__":
+    unittest.main()
