@@ -261,6 +261,42 @@ class BuildContextCardTest(unittest.TestCase):
         self.assertEqual(card["recent_concepts"], ["closures"])
 
 
+class LevelNoteTest(unittest.TestCase):
+    """The note always asks for English only - level changes how complex
+    the English is, never which language it's in."""
+
+    def _note(self, level, known_count=3):
+        state = lib.default_state()
+        state["known_terms"] = terms(known_count)
+        state["level"] = level
+        return lib.build_context_card(state)["note"]
+
+    def test_every_level_is_english_only(self):
+        for level in ("beginner", "intermediate", "advanced"):
+            note = self._note(level)
+            self.assertIn("English only", note, level)
+            self.assertNotIn("their language", note, level)
+            self.assertNotIn("mix", note.lower(), level)
+
+    def test_beginner_asks_for_simple_english_and_spelled_out_terms(self):
+        note = self._note("beginner")
+        self.assertIn("simple English", note)
+        self.assertIn("spell it out in full", note)
+
+    def test_intermediate_explains_new_advanced_words(self):
+        note = self._note("intermediate")
+        self.assertIn("technical vocabulary", note)
+        self.assertIn("new or advanced word", note)
+
+    def test_advanced_needs_no_simplification(self):
+        note = self._note("advanced")
+        self.assertIn("full technical English", note)
+        self.assertIn("no simplification", note)
+
+    def test_note_still_reports_known_term_count(self):
+        self.assertIn("User knows 7 terms.", self._note("intermediate", known_count=7))
+
+
 class CanTeachNowTest(unittest.TestCase):
     def test_true_when_nothing_ever_taught(self):
         state = lib.default_state()

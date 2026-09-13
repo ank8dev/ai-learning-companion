@@ -451,19 +451,26 @@ def recent_concepts(known_terms, limit=5):
 
 
 def _level_note(level, known_count):
+    """Explanations are always in English only; level sets how complex
+    that English is (simple -> normal -> full technical), never which
+    language to use."""
     if level == "beginner":
         return (
-            "User knows %d terms. Explain mostly in their language, "
-            "calling out English terms." % known_count
+            "User knows %d terms. Explain in English only, in simple "
+            "English: short sentences, plain everyday words. The first "
+            "time you use a technical term or abbreviation, spell it out "
+            "in full and explain it briefly in plain words." % known_count
         )
     if level == "intermediate":
         return (
-            "User knows %d terms. Explain in a mix of English and "
-            "their language." % known_count
+            "User knows %d terms. Explain in English only, in normal "
+            "English with more technical vocabulary. Briefly explain a "
+            "genuinely new or advanced word the first time you use it."
+            % known_count
         )
     return (
-        "User knows %d terms. Default to English, only drop back to "
-        "their language for a genuinely new or hard concept." % known_count
+        "User knows %d terms. Explain in English only, in full technical "
+        "English with no simplification." % known_count
     )
 
 

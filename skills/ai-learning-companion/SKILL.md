@@ -53,7 +53,7 @@ All script paths below resolve relative to this skill's base directory (the path
 python3 scripts/router.py
 ```
 
-Prints `{"level": ..., "note": ..., "recent_concepts": [...]}`, computed deterministically from `~/.claude/ai-learning-companion/profile.json`. It also transparently creates or upgrades that file if it's missing or in an old shape — you never need to read or edit its raw contents for this step. Use `note` for the English/user's-language mix (see "Language" below); don't re-derive the thresholds yourself.
+Prints `{"level": ..., "note": ..., "recent_concepts": [...]}`, computed deterministically from `~/.claude/ai-learning-companion/profile.json`. It also transparently creates or upgrades that file if it's missing or in an old shape — you never need to read or edit its raw contents for this step. Use `note` for how complex your English should be (see "Language" below); don't re-derive the thresholds yourself.
 
 ### Step 2 — Notice candidates for this turn
 
@@ -61,6 +61,7 @@ Before touching the gate, look at what actually happened this turn and list ever
 - Anything that passes the one test above, as an `ai_engineering` or `prompting` topic — read `ai_engineering` from `~/.claude/ai-learning-companion/profile.json` directly (same convention as V2's `known_terms` check) to see a topic's current status; a topic absent from the dict counts as new.
 - Any English struggle pattern in the user's own messages since the last digest (chat, comments, commit messages) — check against the literal checklist: missing/wrong articles, wrong or missing verb forms (including a missing "to" before an infinitive), subject-verb agreement, wrong prepositions, wrong word order. Read `struggle_patterns` directly from profile.json — if your observation matches an existing entry, reuse its exact wording so it's recognized as the same pattern.
 - Any plain new vocabulary word worth noting.
+- **Translated messages don't count for English.** If a user message starts with a marker like `[t]` or `(translated)` (any capitalization), skip it entirely for the two English bullets above: no struggle patterns, no `--observe-pattern`, no vocabulary. Only unmarked messages are real signal for the English track. The marker doesn't affect AI-engineering or prompting candidates.
 
 If you found none of these, stop here — there's nothing to gate or arbitrate, and no script call is needed this turn.
 
@@ -158,12 +159,19 @@ Full digest (`full` tier only):
 
 Short. Not a lecture:
 1. Name the pattern in one line (e.g. "missing article before uncountable noun").
-2. Show 1-2 real examples from the user's own recent messages, each with the corrected version next to it, and a short reason only when the fix isn't obvious.
+2. Show 1-2 real examples from the user's own recent unmarked messages (never one starting with `[t]` or `(translated)`), each with the corrected version next to it, and a short reason only when the fix isn't obvious.
 3. Nothing else — no comprehension check, no "try it yourself," no unrelated code commentary.
 
-### Language (unchanged from V2)
+### Language
 
-Reply in the literal language of the user's most recent messages. **"The user's language" means the literal language they actually typed — never a guessed native language.** If they're typing in English, reply in English, full stop, no matter how rough that English is; rough English is exactly what Format B is for, not a reason to switch languages. For Format A, follow the router's `note` for the right English/user's-language mix.
+**Teaching output is always in English only, at every level.** This covers Format A at every tier, and Format B. It holds no matter how rough the user's English is or what language they typed in. Rough English is exactly what Format B is for, not a reason to switch languages.
+
+What changes with level is how complex the English is, never the language. Follow the router's `note`:
+- **Beginner:** simple English. Short sentences, plain everyday words.
+- **Intermediate:** normal English with more technical vocabulary. Briefly explain a genuinely new or advanced word the first time you use it.
+- **Advanced:** full technical English, no simplification.
+
+**Abbreviations, at every level:** the first time an explanation uses an abbreviation (MCP, API, CLI, …), spell out the full term, then say in one short sentence what it means, e.g. "MCP (Model Context Protocol) is a standard way for an AI tool to connect to outside tools and data." Don't assume the acronym is known. Spelling it out costs one sentence, even for an advanced user.
 
 ## Common Mistakes
 
@@ -178,5 +186,7 @@ Reply in the literal language of the user's most recent messages. **"The user's 
 - **Answering the quiz questions yourself.** Ask them and let the user think — don't immediately follow up with the answers.
 - **Forgetting to record the event.** Every digest must end with the matching `update_profile.py --track ...` call, or the gate never resets and `teaching_history`/status never advance.
 - **Teaching an `optional: true` tier-3 English slip by default.** It exists so nothing fires when it's truly the only candidate — but "available" isn't "worth it"; skip more often than not.
-- **"Their English is rough, I'll just reply in their native language instead."** Still the opposite of helping — it removes their only chance to practice. See Language above.
+- **"Their English is rough (or they typed in another language), so I'll explain in their language instead."** Teaching output is English only, always — switching removes their chance to practice. Make the English simpler instead. See Language above.
+- **Using an acronym without spelling it out.** "Set up the MCP server" teaches nothing if MCP was never expanded. Spell it out the first time, at every level.
+- **Reading a `[t]` / `(translated)` message as English signal.** It was translated, so its grammar and vocabulary aren't the user's own. Skip it for the English track.
 - **"The grammar errors felt minor, so I skipped it."** If it reached tier 2 (count >= 2) or you're already producing Format B, teach it plainly — the literal checklist decides, not a felt sense of "minor."

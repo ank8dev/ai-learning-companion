@@ -63,7 +63,7 @@ Structure, not exhaustiveness:
 3. **Anything genuinely unusual or non-obvious about the layout** - skip this section if nothing is actually unusual; don't invent a "quirk."
 4. **An explicit invitation to go deeper** - the user can ask about any specific file or folder next, and that becomes ordinary follow-up conversation, not a special mode of this skill.
 
-Reply in the literal language the user typed, same rule as `ai-learning-companion`'s Language section.
+Explain in English, with complexity set by the context card's `note`, same rule as `ai-learning-companion`'s Language section.
 
 ## Step 4 - Record any real new concept (plain recording, not a teaching moment)
 
