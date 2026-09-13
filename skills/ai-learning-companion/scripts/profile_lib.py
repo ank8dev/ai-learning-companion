@@ -44,6 +44,14 @@ ENGLISH_RETEACH_DAYS = 7
 # checks, it does not throttle the topic like tier 2 does.
 AI_ENG_RETEACH_DAYS = 1
 
+# Explanation-length tiers (see explanation_tier). Each value is the
+# highest times_seen that still gets that tier; anything above the last
+# one is "silent".
+FULL_MAX_SEEN = 0
+SHORT_MAX_SEEN = 3
+REMINDER_MAX_SEEN = 10
+MENTION_MAX_SEEN = 24
+
 
 def threshold_level(known_count):
     """Map a known_terms count to the level it implies, in isolation.
@@ -398,6 +406,34 @@ def pick_teaching_moment(state, candidates, today=None):
             return {"track": track, "topic": topic, "priority": 3, "optional": True}
 
     return None
+
+
+def explanation_tier(times_seen):
+    """How long an AI-engineering/prompting explanation should be, given
+    how many times the topic has already been recorded. Pure.
+
+    Only applies once a topic has already won pick_teaching_moment - it
+    changes the output format, never whether something gets taught.
+    Not used for English tracks.
+
+    - "full"     (0, or None for a topic not in ai_engineering yet)
+    - "short"    (1-3)
+    - "reminder" (4-10)
+    - "mention"  (11-24)
+    - "silent"   (25+) - a backstop for topics that keep recurring
+      without ever reaching "practiced"; SKILL.md records these as
+      practiced so the tier-1 filter takes over from there.
+    """
+    times_seen = times_seen or 0
+    if times_seen <= FULL_MAX_SEEN:
+        return "full"
+    if times_seen <= SHORT_MAX_SEEN:
+        return "short"
+    if times_seen <= REMINDER_MAX_SEEN:
+        return "reminder"
+    if times_seen <= MENTION_MAX_SEEN:
+        return "mention"
+    return "silent"
 
 
 def recent_concepts(known_terms, limit=5):

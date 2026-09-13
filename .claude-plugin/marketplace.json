@@ -12,7 +12,7 @@
     {
       "name": "ai-learning-companion",
       "description": "An ambient AI-engineering, prompting, and English learning companion for AI-assisted work, with a gated cooldown so it teaches at most one thing per moment. Also includes a project-explorer skill that gives a structured first-time tour of a codebase.",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "author": {
         "name": "ank",
         "email": "ank.sfaa@gmail.com"

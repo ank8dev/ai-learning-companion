@@ -21,7 +21,10 @@ gate; that is checked separately via update_profile.py --check):
 Each --candidate is "track:topic" split on the FIRST colon only (so a
 topic may itself contain colons), track one of ai_engineering, prompting,
 english. Prints {"winner": {...}} or {"winner": null} - see
-profile_lib.pick_teaching_moment for the priority rules.
+profile_lib.pick_teaching_moment for the priority rules. An
+ai_engineering/prompting winner also carries "explanation_tier" (full,
+short, reminder, mention, or silent - see profile_lib.explanation_tier);
+an english winner does not.
 
 Usage (project-explorer - read-only, does not write anything, including
 the migration upgrade the other modes perform; independent of the V3
@@ -116,6 +119,12 @@ def main(argv=None):
         except ValueError as exc:
             parser.error(str(exc))
         winner = lib.pick_teaching_moment(migrated_state, candidates)
+        if winner and winner["track"] in ("ai_engineering", "prompting"):
+            # Added here rather than inside pick_teaching_moment so the
+            # arbitration logic itself stays untouched. English winners
+            # keep their V3 shape exactly.
+            entry = migrated_state["ai_engineering"].get(lib.normalize_topic(winner["topic"]), {})
+            winner["explanation_tier"] = lib.explanation_tier(entry.get("times_seen"))
         print(json.dumps({"winner": winner}))
         return 0
 

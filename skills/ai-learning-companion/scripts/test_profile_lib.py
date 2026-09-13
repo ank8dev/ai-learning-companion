@@ -7,8 +7,12 @@ Run with:
 (from scripts/).
 """
 
+import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -497,6 +501,76 @@ class PickTeachingMomentTest(unittest.TestCase):
         ]
         winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
         self.assertEqual(winner["topic"], "missing article")  # higher count
+
+
+class ExplanationTierTest(unittest.TestCase):
+    """Every boundary of explanation_tier, checked from both sides."""
+
+    def test_zero_is_full(self):
+        self.assertEqual(lib.explanation_tier(0), "full")
+
+    def test_missing_count_is_full(self):
+        self.assertEqual(lib.explanation_tier(None), "full")
+
+    def test_one_through_three_is_short(self):
+        self.assertEqual(lib.explanation_tier(1), "short")
+        self.assertEqual(lib.explanation_tier(3), "short")
+
+    def test_four_through_ten_is_reminder(self):
+        self.assertEqual(lib.explanation_tier(4), "reminder")
+        self.assertEqual(lib.explanation_tier(10), "reminder")
+
+    def test_eleven_through_twenty_four_is_mention(self):
+        self.assertEqual(lib.explanation_tier(11), "mention")
+        self.assertEqual(lib.explanation_tier(24), "mention")
+
+    def test_twenty_five_and_up_is_silent(self):
+        self.assertEqual(lib.explanation_tier(25), "silent")
+        self.assertEqual(lib.explanation_tier(1000), "silent")
+
+
+class RouterPickExplanationTierCliTest(unittest.TestCase):
+    """CLI-level: router.py --pick adds explanation_tier to AI-engineering/
+    prompting winners only - English winners keep their V3 shape exactly."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="pick-tier-test-")
+        self.profile = os.path.join(self._tmp, "profile.json")
+        self.router = os.path.join(os.path.dirname(os.path.abspath(__file__)), "router.py")
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _pick(self, state, *candidates):
+        with open(self.profile, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        args = [sys.executable, self.router, "--pick", "--profile", self.profile]
+        for candidate in candidates:
+            args += ["--candidate", candidate]
+        result = subprocess.run(args, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)["winner"]
+
+    def test_ai_engineering_winner_gets_tier_from_times_seen(self):
+        state = lib.default_state()
+        state["ai_engineering"] = {"git-init": {"status": "seen", "times_seen": 4}}
+        winner = self._pick(state, "ai_engineering:Git-Init")
+        self.assertEqual(winner["topic"], "Git-Init")
+        self.assertEqual(winner["explanation_tier"], "reminder")
+
+    def test_new_prompting_topic_gets_full_tier(self):
+        winner = self._pick(lib.default_state(), "prompting:few-shot")
+        self.assertEqual(winner["explanation_tier"], "full")
+
+    def test_english_winner_has_no_tier_key(self):
+        state = lib.default_state()
+        state["struggle_patterns"] = [
+            {"pattern": "missing article", "count": 3, "last_seen": "2026-01-01"}
+        ]
+        winner = self._pick(state, "english:missing article")
+        self.assertEqual(winner["track"], "english")
+        self.assertNotIn("explanation_tier", winner)
+        self.assertEqual(set(winner), {"track", "topic", "priority", "optional"})
 
 
 if __name__ == "__main__":
