@@ -11,8 +11,8 @@
   "plugins": [
     {
       "name": "ai-learning-companion",
-      "description": "Teaches you what changed and why after a coding session, with a quick comprehension check and a practice task.",
-      "version": "0.1.0",
+      "description": "An ambient AI-engineering, prompting, and English learning companion for AI-assisted work, with a gated cooldown so it teaches at most one thing per moment.",
+      "version": "0.3.0",
       "author": {
         "name": "ank",
         "email": "ank.sfaa@gmail.com"

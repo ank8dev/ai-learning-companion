@@ -66,6 +66,50 @@ class MigrateTest(unittest.TestCase):
         self.assertEqual(new_state, state)
 
 
+class MigrateV3Test(unittest.TestCase):
+    """Migration from a V2-shape file to V3-shape."""
+
+    def test_v2_shape_gets_v3_fields_with_empty_defaults(self):
+        old = {
+            "known_terms": terms(7),
+            "sessions_taught": 3,
+            "level": "intermediate",
+            "level_history": [],
+            "preferences": {"foo": "bar"},
+            "task_type_counts": {"refactor": 2},
+            "level_watch": None,
+        }
+        new_state, changed = lib.migrate(old)
+
+        self.assertTrue(changed)
+        # Every V2 field is untouched.
+        self.assertEqual(new_state["known_terms"], old["known_terms"])
+        self.assertEqual(new_state["sessions_taught"], 3)
+        self.assertEqual(new_state["level"], "intermediate")
+        self.assertEqual(new_state["level_history"], [])
+        self.assertEqual(new_state["preferences"], {"foo": "bar"})
+        self.assertEqual(new_state["task_type_counts"], {"refactor": 2})
+        self.assertIsNone(new_state["level_watch"])
+        # New V3 fields get empty/null defaults.
+        self.assertEqual(new_state["ai_engineering"], {})
+        self.assertEqual(new_state["struggle_patterns"], [])
+        self.assertEqual(new_state["teaching_history"], [])
+        self.assertIsNone(new_state["last_taught_at"])
+        self.assertEqual(new_state["turns_since_last_teach"], 0)
+
+    def test_does_not_mutate_input(self):
+        old = {"known_terms": {}, "sessions_taught": 0}
+        lib.migrate(old)
+        self.assertNotIn("ai_engineering", old)
+        self.assertNotIn("turns_since_last_teach", old)
+
+    def test_v3_shape_is_a_noop(self):
+        state = lib.default_state()
+        new_state, changed = lib.migrate(state)
+        self.assertFalse(changed)
+        self.assertEqual(new_state, state)
+
+
 class ComputeLevelTest(unittest.TestCase):
     def test_no_change_when_raw_matches_current(self):
         state = {
@@ -211,6 +255,248 @@ class BuildContextCardTest(unittest.TestCase):
         self.assertEqual(set(card.keys()), {"level", "note", "recent_concepts"})
         self.assertEqual(card["level"], "beginner")
         self.assertEqual(card["recent_concepts"], ["closures"])
+
+
+class CanTeachNowTest(unittest.TestCase):
+    def test_true_when_nothing_ever_taught(self):
+        state = lib.default_state()
+        self.assertIsNone(state["last_taught_at"])
+        self.assertTrue(lib.can_teach_now(state))
+
+    def test_false_right_after_a_teach(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 0
+        self.assertFalse(lib.can_teach_now(state, min_gap=3))
+
+    def test_false_below_the_gap(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 2
+        self.assertFalse(lib.can_teach_now(state, min_gap=3))
+
+    def test_true_once_gap_is_reached(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 3
+        self.assertTrue(lib.can_teach_now(state, min_gap=3))
+
+    def test_true_when_gap_is_exceeded(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 10
+        self.assertTrue(lib.can_teach_now(state, min_gap=3))
+
+    def test_full_cycle_via_tick_gate(self):
+        # Simulate a teach (reset), then 3 checks tick the counter, and
+        # the gate should only reopen once the 3rd tick lands.
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 0
+        self.assertFalse(lib.can_teach_now(state, min_gap=3))
+
+        state = lib.tick_gate(state)
+        self.assertEqual(state["turns_since_last_teach"], 1)
+        self.assertFalse(lib.can_teach_now(state, min_gap=3))
+
+        state = lib.tick_gate(state)
+        self.assertEqual(state["turns_since_last_teach"], 2)
+        self.assertFalse(lib.can_teach_now(state, min_gap=3))
+
+        state = lib.tick_gate(state)
+        self.assertEqual(state["turns_since_last_teach"], 3)
+        self.assertTrue(lib.can_teach_now(state, min_gap=3))
+
+
+class TickGateTest(unittest.TestCase):
+    def test_increments_counter(self):
+        state = lib.default_state()
+        state["turns_since_last_teach"] = 5
+        new_state = lib.tick_gate(state)
+        self.assertEqual(new_state["turns_since_last_teach"], 6)
+
+    def test_does_not_mutate_input(self):
+        state = lib.default_state()
+        lib.tick_gate(state)
+        self.assertEqual(state["turns_since_last_teach"], 0)
+
+    def test_observed_pattern_is_appended_as_new(self):
+        state = lib.default_state()
+        new_state = lib.tick_gate(
+            state, observed_patterns=["missing article"], today="2026-01-01"
+        )
+        self.assertEqual(len(new_state["struggle_patterns"]), 1)
+        entry = new_state["struggle_patterns"][0]
+        self.assertEqual(entry["pattern"], "missing article")
+        self.assertEqual(entry["count"], 1)
+        self.assertEqual(entry["last_seen"], "2026-01-01")
+
+    def test_observed_pattern_increments_existing_case_insensitively(self):
+        state = lib.default_state()
+        state["struggle_patterns"] = [
+            {"pattern": "Missing Article", "count": 1, "last_seen": "2026-01-01"}
+        ]
+        new_state = lib.tick_gate(
+            state, observed_patterns=["  missing article  "], today="2026-01-05"
+        )
+        self.assertEqual(len(new_state["struggle_patterns"]), 1)
+        entry = new_state["struggle_patterns"][0]
+        # Original casing/text is preserved; only count/last_seen bump.
+        self.assertEqual(entry["pattern"], "Missing Article")
+        self.assertEqual(entry["count"], 2)
+        self.assertEqual(entry["last_seen"], "2026-01-05")
+
+    def test_blank_observed_pattern_is_ignored(self):
+        state = lib.default_state()
+        new_state = lib.tick_gate(state, observed_patterns=["  ", ""])
+        self.assertEqual(new_state["struggle_patterns"], [])
+
+
+class PickTeachingMomentTest(unittest.TestCase):
+    def test_ai_engineering_beats_recurring_struggle_pattern(self):
+        state = lib.default_state()
+        state["struggle_patterns"] = [
+            {"pattern": "missing article", "count": 3, "last_seen": "2026-01-01"}
+        ]
+        candidates = [
+            ("english", "missing article"),
+            ("ai_engineering", "mcp"),
+        ]
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["track"], "ai_engineering")
+        self.assertEqual(winner["topic"], "mcp")
+        self.assertEqual(winner["priority"], 1)
+        self.assertFalse(winner["optional"])
+
+    def test_recurring_struggle_pattern_beats_one_off_slip(self):
+        state = lib.default_state()
+        state["struggle_patterns"] = [
+            {"pattern": "missing article", "count": 2, "last_seen": "2026-01-01"}
+        ]
+        candidates = [
+            ("english", "wrong preposition"),  # one-off, count 0/absent
+            ("english", "missing article"),  # recurring, count 2
+        ]
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["track"], "english")
+        self.assertEqual(winner["topic"], "missing article")
+        self.assertEqual(winner["priority"], 2)
+        self.assertFalse(winner["optional"])
+
+    def test_one_off_slip_wins_only_when_nothing_else_qualifies(self):
+        state = lib.default_state()
+        candidates = [("english", "wrong preposition")]
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["track"], "english")
+        self.assertEqual(winner["priority"], 3)
+        self.assertTrue(winner["optional"])
+
+    def test_practiced_topic_is_filtered_out_entirely(self):
+        state = lib.default_state()
+        state["ai_engineering"] = {"mcp": {"status": "practiced", "times_seen": 5}}
+        candidates = [
+            ("ai_engineering", "mcp"),
+            ("english", "wrong preposition"),
+        ]
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        # mcp is filtered out (not demoted), so the one-off English slip
+        # wins by default since nothing else qualifies.
+        self.assertEqual(winner["track"], "english")
+        self.assertEqual(winner["priority"], 3)
+
+    def test_recently_taught_struggle_pattern_falls_to_tier_3(self):
+        state = lib.default_state()
+        state["struggle_patterns"] = [
+            {"pattern": "missing article", "count": 5, "last_seen": "2026-01-09"}
+        ]
+        state["teaching_history"] = [
+            {"track": "english", "topic": "missing article", "at": "2026-01-05"}
+        ]
+        candidates = [("english", "missing article")]
+        # Within ENGLISH_RETEACH_DAYS (7) of 2026-01-05.
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["priority"], 3)
+        self.assertTrue(winner["optional"])
+
+    def test_recently_taught_ai_engineering_topic_is_skipped_this_round(self):
+        state = lib.default_state()
+        state["ai_engineering"] = {"mcp": {"status": "seen", "times_seen": 1}}
+        state["teaching_history"] = [
+            {"track": "ai_engineering", "topic": "mcp", "at": "2026-01-09"}
+        ]
+        candidates = [
+            ("ai_engineering", "mcp"),
+            ("english", "wrong preposition"),
+        ]
+        # Within AI_ENG_RETEACH_DAYS (1) of 2026-01-09.
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["track"], "english")
+        self.assertEqual(winner["priority"], 3)
+
+    def test_ai_engineering_topic_eligible_again_once_cooldown_passes(self):
+        # Same topic/history shape as the "skipped this round" test above,
+        # taught on 2026-01-08 (still status "seen"), checked at the exact
+        # AI_ENG_RETEACH_DAYS (1) boundary and one day past it.
+        state = lib.default_state()
+        state["ai_engineering"] = {"mcp": {"status": "seen", "times_seen": 1}}
+        state["teaching_history"] = [
+            {"track": "ai_engineering", "topic": "mcp", "at": "2026-01-08"}
+        ]
+        candidates = [
+            ("ai_engineering", "mcp"),
+            ("english", "wrong preposition"),
+        ]
+
+        # Exactly AI_ENG_RETEACH_DAYS (1 day) later: still blocked.
+        blocked = lib.pick_teaching_moment(state, candidates, today="2026-01-09")
+        self.assertEqual(blocked["track"], "english")
+        self.assertEqual(blocked["priority"], 3)
+
+        # One day past the boundary (2 days since taught): eligible again.
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["track"], "ai_engineering")
+        self.assertEqual(winner["topic"], "mcp")
+        self.assertEqual(winner["priority"], 1)
+
+        # pick_teaching_moment is read-only: winning again does not itself
+        # upgrade the topic's status - only apply_teaching_event (a
+        # separate, explicit write) can move it past "seen".
+        self.assertEqual(state["ai_engineering"]["mcp"]["status"], "seen")
+
+    def test_no_candidates_returns_none(self):
+        state = lib.default_state()
+        self.assertIsNone(lib.pick_teaching_moment(state, []))
+
+    def test_all_filtered_out_returns_none(self):
+        state = lib.default_state()
+        state["ai_engineering"] = {"mcp": {"status": "practiced", "times_seen": 5}}
+        candidates = [("ai_engineering", "mcp")]
+        self.assertIsNone(lib.pick_teaching_moment(state, candidates))
+
+    def test_tier1_prefers_lowest_status_then_input_order(self):
+        state = lib.default_state()
+        state["ai_engineering"] = {
+            "context-engineering": {"status": "understood", "times_seen": 2},
+        }
+        candidates = [
+            ("ai_engineering", "context-engineering"),  # understood -> rank 2
+            ("prompting", "few-shot"),  # unseen -> rank 0
+        ]
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["topic"], "few-shot")
+
+    def test_tier2_prefers_higher_count_then_alphabetical(self):
+        state = lib.default_state()
+        state["struggle_patterns"] = [
+            {"pattern": "wrong preposition", "count": 2, "last_seen": "2026-01-01"},
+            {"pattern": "missing article", "count": 4, "last_seen": "2026-01-01"},
+        ]
+        candidates = [
+            ("english", "wrong preposition"),
+            ("english", "missing article"),
+        ]
+        winner = lib.pick_teaching_moment(state, candidates, today="2026-01-10")
+        self.assertEqual(winner["topic"], "missing article")  # higher count
 
 
 if __name__ == "__main__":
