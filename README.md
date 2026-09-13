@@ -11,6 +11,10 @@ A deterministic cooldown gate and priority rule keep it rare and ambient rather 
 
 It keeps a lightweight learner profile at `~/.claude/ai-learning-companion/profile.json` (no server, just a local JSON file, Python stdlib only) so known concepts stop being re-explained, and explanations shift more toward plain English as the profile grows.
 
+### Project explorer
+
+A second, independent skill: a structured first-time orientation to an unfamiliar codebase — top-level folders and why, the handful of files worth reading first, anything genuinely unusual about the layout — instead of a file-by-file dump. Trigger it on demand (`/explore-project`, or just ask "explain this project to me"), or accept the one-line invitation a `SessionStart` hook offers the first time you open a project it hasn't seen before. It shares the same learner profile (so depth still matches your level), but not the ambient teaching skill's cooldown — the two are unrelated trigger types.
+
 ## Install
 
 ```

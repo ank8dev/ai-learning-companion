@@ -8,6 +8,8 @@ logic live in exactly one place.
 
 import json
 import os
+import re
+import subprocess
 import tempfile
 from datetime import date
 
@@ -73,6 +75,11 @@ def default_state():
         "teaching_history": [],
         "last_taught_at": None,
         "turns_since_last_teach": 0,
+        # project-explorer fields - independent of the V3 gate above; see
+        # compute_project_id / is_project_new / mark_project_toured /
+        # decline_tour near the end of this file.
+        "toured_projects": {},
+        "declined_tours": {},
     }
 
 
@@ -161,6 +168,15 @@ def migrate(state):
         changed = True
     if "turns_since_last_teach" not in state:
         state["turns_since_last_teach"] = 0
+        changed = True
+
+    # project-explorer fields. Added with empty defaults only - never
+    # derived from or touching any V2/V3 field above.
+    if "toured_projects" not in state or not isinstance(state["toured_projects"], dict):
+        state["toured_projects"] = {}
+        changed = True
+    if "declined_tours" not in state or not isinstance(state["declined_tours"], dict):
+        state["declined_tours"] = {}
         changed = True
 
     return state, changed
@@ -424,6 +440,171 @@ def build_context_card(state):
         "note": _level_note(level, len(known_terms)),
         "recent_concepts": recent_concepts(known_terms),
     }
+
+
+# --- project-explorer support --------------------------------------
+#
+# Everything below is independent of the V2/V3 teaching gate above: it
+# shares only the profile.json file and the ai_engineering dict, not
+# sessions_taught/level/teaching_history/turns_since_last_teach/
+# last_taught_at. See skills/project-explorer/SKILL.md.
+
+# Status ranks for ai_engineering/prompting topics - same meaning as
+# apply_teaching_event's identical inline dict in update_profile.py
+# ("seen" -> "understood" -> "practiced", never moves down). Duplicated
+# rather than imported from there so that file's V3 code is left
+# completely untouched by this addition.
+_STATUS_RANK = {None: 0, "seen": 1, "understood": 2, "practiced": 3}
+
+
+def _git_output(args, cwd):
+    """Run `git <args>` in `cwd`, returning stripped stdout on success
+    or None on any failure (git missing, not a repo, no such remote,
+    timeout, non-zero exit). Never raises."""
+    try:
+        result = subprocess.run(
+            ["git"] + list(args),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _normalize_git_remote(url):
+    """Normalize a git remote URL to "host/owner/repo", stripping any
+    embedded credentials and a trailing ".git", so SSH and HTTPS clones
+    of the same repo produce the same project_id and no credential ever
+    ends up on disk in profile.json. Returns None if `url` doesn't match
+    either recognized form.
+    """
+    url = (url or "").strip()
+    if not url:
+        return None
+
+    # SSH scp-like syntax: git@host:owner/repo(.git)?
+    match = re.match(r"^[\w.-]+@([\w.-]+):(.+?)(?:\.git)?/?$", url)
+    if match:
+        host, path = match.group(1), match.group(2)
+        return "%s/%s" % (host, path.strip("/"))
+
+    # URL syntax: scheme://[user[:token]@]host[:port]/path(.git)?
+    match = re.match(
+        r"^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]*@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?/?$",
+        url,
+    )
+    if match:
+        host, path = match.group(1), match.group(2)
+        return "%s/%s" % (host, path.strip("/"))
+
+    return None
+
+
+def compute_project_id(path):
+    """Compute a stable project_id for the project rooted at (or
+    containing) `path`. Never writes anything, never raises - any git
+    or filesystem failure just falls back to the path form.
+
+    - "git:<host>/<owner>/<repo>" when `git remote get-url origin`
+      succeeds in the project's git root and parses (credentials
+      stripped; SSH and HTTPS clones of the same repo produce the same
+      id).
+    - "path:<realpath>" otherwise (no git, no remote, an unparseable
+      remote URL, or git itself unavailable/timed out) - the resolved
+      absolute path of the git root if one was found, else of `path`
+      itself.
+    """
+    real_path = os.path.realpath(path)
+    root = _git_output(["rev-parse", "--show-toplevel"], real_path) or real_path
+    remote_url = _git_output(["remote", "get-url", "origin"], root)
+    normalized = _normalize_git_remote(remote_url) if remote_url else None
+    if normalized:
+        return "git:%s" % normalized
+    return "path:%s" % os.path.realpath(root)
+
+
+def is_project_new(state, project_id):
+    """True if `project_id` has never been toured or declined before.
+    Pure: never mutates state or touches disk. A decline counts the
+    same as a tour here - both mean "don't offer the invitation again"
+    - even though they're recorded in separate dicts (see
+    mark_project_toured / decline_tour)."""
+    toured = state.get("toured_projects", {})
+    declined = state.get("declined_tours", {})
+    return project_id not in toured and project_id not in declined
+
+
+def mark_project_toured(state, project_id, path_hint, today=None):
+    """Record that `project_id` has actually been toured. Pure: returns
+    a new state dict, never mutates the input.
+
+    Idempotent: if this project_id already has a toured_projects entry,
+    its original first_toured_at is kept - touring again doesn't reset
+    the date. Does not clear a prior decline_tours entry for the same
+    id; the two facts ("declined once", "later actually toured") can
+    coexist, and is_project_new only cares that at least one exists.
+    """
+    today = today or date.today().isoformat()
+    new_state = dict(state)
+    toured = dict(state.get("toured_projects", {}))
+    if project_id not in toured:
+        toured[project_id] = {"first_toured_at": today, "path_hint": path_hint}
+    new_state["toured_projects"] = toured
+    return new_state
+
+
+def decline_tour(state, project_id, path_hint, today=None):
+    """Record that the user declined the SessionStart tour invitation
+    for `project_id`, so it stops being offered here. Pure: returns a
+    new state dict, never mutates the input. Idempotent, same pattern
+    as mark_project_toured.
+
+    Kept as a dict separate from toured_projects on purpose: "declined"
+    and "actually toured" are different facts about a project, even
+    though is_project_new() treats either as reason enough to stop
+    offering the invitation.
+    """
+    today = today or date.today().isoformat()
+    new_state = dict(state)
+    declined = dict(state.get("declined_tours", {}))
+    if project_id not in declined:
+        declined[project_id] = {"declined_at": today, "path_hint": path_hint}
+    new_state["declined_tours"] = declined
+    return new_state
+
+
+def record_concept(state, topic, status=None, today=None):
+    """Plain recording of an AI-engineering/prompting concept noticed
+    during a project-explorer tour - deliberately NOT a V3 teaching
+    event. Upserts state["ai_engineering"][normalize_topic(topic)] the
+    same way apply_teaching_event does in update_profile.py, but
+    touches nothing else: no teaching_history entry, no change to
+    last_taught_at/turns_since_last_teach/sessions_taught/known_terms/
+    level. The two skills share this one dict, not the teaching gate.
+
+    Pure: returns a new state dict, never mutates the input. Status
+    only ever moves up (seen -> understood -> practiced); a brand-new
+    topic defaults to "seen".
+    """
+    today = today or date.today().isoformat()
+    new_state = dict(state)
+    ai_engineering = dict(state.get("ai_engineering", {}))
+    key = normalize_topic(topic)
+    entry = dict(ai_engineering.get(key, {}))
+    existing_status = entry.get("status")
+    requested_status = status or existing_status or "seen"
+    if _STATUS_RANK.get(requested_status, 0) >= _STATUS_RANK.get(existing_status, 0):
+        entry["status"] = requested_status
+    entry["times_seen"] = entry.get("times_seen", 0) + 1
+    entry["last_seen"] = today
+    ai_engineering[key] = entry
+    new_state["ai_engineering"] = ai_engineering
+    return new_state
 
 
 def safe_write_json(path, data):

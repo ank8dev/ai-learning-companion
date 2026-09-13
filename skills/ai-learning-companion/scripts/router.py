@@ -22,6 +22,14 @@ Each --candidate is "track:topic" split on the FIRST colon only (so a
 topic may itself contain colons), track one of ai_engineering, prompting,
 english. Prints {"winner": {...}} or {"winner": null} - see
 profile_lib.pick_teaching_moment for the priority rules.
+
+Usage (project-explorer - read-only, does not write anything, including
+the migration upgrade the other modes perform; independent of the V3
+gate/arbitration above):
+    python3 router.py --check-project PATH
+
+Prints {"project_id": "...", "is_new": bool} - see
+profile_lib.compute_project_id / is_project_new.
 """
 
 import argparse
@@ -71,7 +79,28 @@ def main(argv=None):
         dest="candidates",
         help='A candidate teaching moment as "track:topic" (repeatable). Only used with --pick.',
     )
+    parser.add_argument(
+        "--check-project",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Compute the project_id for PATH and report whether it has "
+            "been toured/declined before. Read-only: unlike the other "
+            "modes, does not upgrade profile.json on disk even if its "
+            "shape is old. Mutually exclusive with --pick."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.check_project is not None:
+        if args.pick or args.candidates:
+            parser.error("--check-project cannot be combined with --pick")
+        state, _existed = lib.load_state(args.profile)
+        migrated_state, _changed = lib.migrate(state)
+        project_id = lib.compute_project_id(args.check_project)
+        is_new = lib.is_project_new(migrated_state, project_id)
+        print(json.dumps({"project_id": project_id, "is_new": is_new}))
+        return 0
 
     state, existed = lib.load_state(args.profile)
     migrated_state, changed = lib.migrate(state)

@@ -36,9 +36,25 @@ known-term coverage:
     python3 update_profile.py --track english --pattern "missing article before uncountable noun"
     python3 update_profile.py --track english --term "onboarding"
 
+project-explorer modes - independent of the V3 gate/arbitration above;
+none of these touch known_terms/sessions_taught/level/teaching_history/
+last_taught_at/turns_since_last_teach. Each is its own single atomic
+write, same in-memory-then-safe_write_json pattern as everything else
+here. See skills/project-explorer/SKILL.md.
+
+    python3 update_profile.py --mark-toured PATH
+    -> {"project_id": "...", "is_new": false, "first_toured_at": "..."}
+
+    python3 update_profile.py --decline-tour PATH
+    -> {"project_id": "...", "is_new": false, "declined_at": "..."}
+
+    python3 update_profile.py --record-concept "<topic>" [--status seen|understood|practiced]
+    -> refreshed context card (plain ai_engineering recording, NOT a V3
+       teaching event - does not call --check, does not run arbitration)
+
 Prints the refreshed context card (same shape as router.py) to stdout
-for every mode except --check, so SKILL.md doesn't need a second process
-call to see the new level.
+for every mode except --check/--mark-toured/--decline-tour, so SKILL.md
+doesn't need a second process call to see the new level.
 """
 
 import argparse
@@ -222,7 +238,105 @@ def main(argv=None):
         default=None,
         help="Struggle-pattern description for an english teaching event, e.g. 'missing article before uncountable noun'. Omit to instead teach a plain vocabulary word via --term.",
     )
+    parser.add_argument(
+        "--mark-toured",
+        default=None,
+        metavar="PATH",
+        dest="mark_toured",
+        help=(
+            "project-explorer: record that the project at PATH has been "
+            "toured. Idempotent (keeps the original first_toured_at). "
+            "Independent of the V3 gate - mutually exclusive with --check "
+            "and any teaching-event/V2 flag."
+        ),
+    )
+    parser.add_argument(
+        "--decline-tour",
+        default=None,
+        metavar="PATH",
+        dest="decline_tour",
+        help=(
+            "project-explorer: record that the user declined the tour "
+            "invitation for the project at PATH, so it stops being "
+            "offered. Independent of the V3 gate - mutually exclusive "
+            "with --check and any teaching-event/V2 flag."
+        ),
+    )
+    parser.add_argument(
+        "--record-concept",
+        default=None,
+        metavar="TOPIC",
+        dest="record_concept",
+        help=(
+            "project-explorer: plain recording of an AI-engineering/"
+            "prompting concept noticed during a tour - NOT a V3 teaching "
+            "event (does not call --check, does not touch "
+            "teaching_history/last_taught_at/turns_since_last_teach). "
+            "Combine with --status to set its initial status (default "
+            "'seen', same up-only rule as --track). Mutually exclusive "
+            "with --check and any teaching-event/V2 flag."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    project_explorer_modes = [
+        ("--mark-toured", args.mark_toured),
+        ("--decline-tour", args.decline_tour),
+        ("--record-concept", args.record_concept),
+    ]
+    active_modes = [name for name, value in project_explorer_modes if value is not None]
+
+    if active_modes:
+        if len(active_modes) > 1:
+            parser.error("%s cannot be combined with each other" % " and ".join(active_modes))
+        if args.check or args.track or args.pattern or args.terms or args.task_type:
+            parser.error("%s cannot be combined with --check or any teaching-event/V2 flag" % active_modes[0])
+        if args.mark_toured is not None and args.status is not None:
+            parser.error("--status is not valid with --mark-toured")
+        if args.decline_tour is not None and args.status is not None:
+            parser.error("--status is not valid with --decline-tour")
+
+        state, _existed = lib.load_state(args.profile)
+        state, _changed = lib.migrate(state)
+
+        if args.mark_toured is not None:
+            project_id = lib.compute_project_id(args.mark_toured)
+            path_hint = os.path.realpath(args.mark_toured)
+            new_state = lib.mark_project_toured(state, project_id, path_hint)
+            lib.safe_write_json(args.profile, new_state)
+            print(
+                json.dumps(
+                    {
+                        "project_id": project_id,
+                        "is_new": False,
+                        "first_toured_at": new_state["toured_projects"][project_id]["first_toured_at"],
+                    }
+                )
+            )
+            return 0
+
+        if args.decline_tour is not None:
+            project_id = lib.compute_project_id(args.decline_tour)
+            path_hint = os.path.realpath(args.decline_tour)
+            new_state = lib.decline_tour(state, project_id, path_hint)
+            lib.safe_write_json(args.profile, new_state)
+            print(
+                json.dumps(
+                    {
+                        "project_id": project_id,
+                        "is_new": False,
+                        "declined_at": new_state["declined_tours"][project_id]["declined_at"],
+                    }
+                )
+            )
+            return 0
+
+        # --record-concept
+        new_state = lib.record_concept(state, args.record_concept, status=args.status)
+        lib.safe_write_json(args.profile, new_state)
+        card = lib.build_context_card(new_state)
+        print(json.dumps(card))
+        return 0
 
     if args.check:
         if args.track or args.topic or args.status or args.pattern or args.terms or args.task_type:
