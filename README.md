@@ -4,7 +4,7 @@ I built this for myself, first. I'm learning English and learning to be an AI en
 
 Built with [Claude Code](https://claude.com/claude-code).
 
-It's two Claude Code skills that share one local learner profile.
+It's three Claude Code skills that share one local learner profile.
 
 ## ai-learning-companion (the teaching skill)
 
