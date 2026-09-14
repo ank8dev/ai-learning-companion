@@ -21,6 +21,12 @@ A second, independent skill: a structured first-time orientation to an unfamilia
 
 Trigger it on demand (slash command explore-project, or just ask "explain this project to me"), or accept the one-line invitation a SessionStart hook offers the first time you open a project it hasn't seen before. It shares the same learner profile (so depth still matches your level), but not the teaching skill's cooldown — the two are unrelated trigger types.
 
+## Explain this
+
+A third, independent skill: a complete explanation of one specific thing you point at — a file, a folder, a code block, a line, a function, or a dependency — covering what it is, what it does, why it's built that way, and anything genuinely non-obvious.
+
+Trigger it on demand (slash command explain-this, or just ask "explain this file" or "what does this dependency do"). Because you asked, it always gives the full explanation at your level, with no cooldown and no shortening for topics you've seen before. It still records the concept in the shared learner profile, so the teaching skill knows you've already met it. For a whole-project overview, it points you to project explorer instead.
+
 ## How it works
 
 Everything runs locally: a single JSON file at ~/.claude/ai-learning-companion/profile.json, read and written by a few small Python (stdlib-only) scripts. No server, no network calls, no external dependencies. The level system, the cooldown, and the teaching priority rules are all deterministic code, not something the model decides on its own each time.
