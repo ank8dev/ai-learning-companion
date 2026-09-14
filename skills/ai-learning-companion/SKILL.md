@@ -1,6 +1,6 @@
 ---
 name: ai-learning-companion
-description: Use before running a genuinely new or important command (git, deployment, package managers, build tools), or after any moment of real AI-assisted work — not just a finished code change — where something worth explaining appeared (would explaining it help the user explain their own project to someone else?), a genuine recurring English struggle showed up, or (rarely) a one-off English slip, and the teaching-cooldown gate is open. Not for small talk, trivial commands like ls/cd/cat, cosmetic-only changes, a single minor typo, a concept already at "practiced" status, mid-task partial work, or anything still inside the cooldown gate.
+description: Use at the end of every turn that added, removed, or modified files, for a short Change Summary (always, even when nothing is taught). For teaching, use before running a genuinely new or important command (git, deployment, package managers, build tools), or after any moment of real AI-assisted work — not just a finished code change — where something worth explaining appeared (would explaining it help the user explain their own project to someone else?), a genuine recurring English struggle showed up, or (rarely) a one-off English slip, and the teaching-cooldown gate is open. Not for small talk, trivial commands like ls/cd/cat, cosmetic-only changes, a single minor typo, a concept already at "practiced" status, mid-task partial work, or anything still inside the cooldown gate. Those teaching exclusions never skip the Change Summary.
 ---
 
 # AI Learning Companion
@@ -173,6 +173,38 @@ What changes with level is how complex the English is, never the language. Follo
 
 **Abbreviations, at every level:** the first time an explanation uses an abbreviation (MCP, API, CLI, …), spell out the full term, then say in one short sentence what it means, e.g. "MCP (Model Context Protocol) is a standard way for an AI tool to connect to outside tools and data." Don't assume the acronym is known. Spelling it out costs one sentence, even for an advanced user.
 
+## Change Summary
+
+**Change Summary is unconditional and gate-independent. Teaching is conditional and gated.** These are two separate behaviors. Keep them separate in future edits: don't merge them, and don't route one through the other.
+
+### When
+
+At the end of every turn where files were added, removed, or modified. This holds whether or not anything was taught, and however small or routine the change was.
+
+It runs entirely outside the teaching flow:
+- No script calls for it. It isn't a candidate, isn't arbitrated, doesn't reset the cooldown, and doesn't count toward `times_seen`.
+- Every "stop" in Steps 2–4 (no candidates, `can_teach: false`, `winner: null`) ends the teaching flow only. It never suppresses the Change Summary.
+- A cosmetic-only change is skipped for teaching, but it still gets a Change Summary.
+
+Skip it only when no files were added, removed, or modified this turn: a pure discussion, a question answered, nothing written to disk.
+
+### Format
+
+1–3 plain lines, not a report. Name each changed file with what happened to it (added, removed, modified), then give one brief reason for the turn:
+
+```
+Files: added src/utils/validate.ts, modified src/routes/user.ts —
+added input validation for the signup endpoint.
+```
+
+- Always name the files, even for a cosmetic diff. The reason can be a few words ("formatting only").
+- One reason for the whole turn, not one per file.
+- If listing every file would go past 3 lines, group them (e.g. "modified 12 files under src/components/").
+
+### Alongside teaching
+
+If a teaching moment also wins this turn, the Change Summary still appears. It comes after the teaching content, as its own short `Files:` line, visually separate. It's informational, not a second teaching moment, so it doesn't break the one-thing-per-turn rule. Don't fold it into Format A's "What changed" item, and don't drop it because "What changed" already covered the diff.
+
 ## Common Mistakes
 
 - **Firing on every micro-edit.** Still applies — the widened trigger is about the *quality* of a candidate moment, not how often you check for one.
@@ -190,3 +222,5 @@ What changes with level is how complex the English is, never the language. Follo
 - **Using an acronym without spelling it out.** "Set up the MCP server" teaches nothing if MCP was never expanded. Spell it out the first time, at every level.
 - **Reading a `[t]` / `(translated)` message as English signal.** It was translated, so its grammar and vocabulary aren't the user's own. Skip it for the English track.
 - **"The grammar errors felt minor, so I skipped it."** If it reached tier 2 (count >= 2) or you're already producing Format B, teach it plainly — the literal checklist decides, not a felt sense of "minor."
+- **Skipping the Change Summary because nothing was taught.** A closed gate, a `null` winner, or a cosmetic-only diff ends teaching, not the summary. If files changed, it appears.
+- **Treating the Change Summary as teaching.** No script call, no cooldown reset, no `times_seen`, and don't merge it into Format A's "What changed."
