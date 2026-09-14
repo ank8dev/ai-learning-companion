@@ -33,6 +33,15 @@ gate/arbitration above):
 
 Prints {"project_id": "...", "is_new": bool} - see
 profile_lib.compute_project_id / is_project_new.
+
+Usage (teaching-gate status - read-only, same no-write rule as
+--check-project, including no migration upgrade; unlike
+update_profile.py --check it never ticks the gate counter, so the Stop
+hook can call it on every turn):
+    python3 router.py --gate-status
+
+Prints {"can_teach": bool, "turns_since_last_teach": N, "min_gap": N} -
+see profile_lib.gate_status.
 """
 
 import argparse
@@ -93,7 +102,24 @@ def main(argv=None):
             "shape is old. Mutually exclusive with --pick."
         ),
     )
+    parser.add_argument(
+        "--gate-status",
+        action="store_true",
+        help=(
+            "Report the teaching gate's current state without advancing "
+            "it. Read-only: never writes profile.json, not even the shape "
+            "upgrade. Mutually exclusive with --pick and --check-project."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.gate_status:
+        if args.pick or args.candidates or args.check_project is not None:
+            parser.error("--gate-status cannot be combined with --pick or --check-project")
+        state, _existed = lib.load_state(args.profile)
+        migrated_state, _changed = lib.migrate(state)
+        print(json.dumps(lib.gate_status(migrated_state)))
+        return 0
 
     if args.check_project is not None:
         if args.pick or args.candidates:

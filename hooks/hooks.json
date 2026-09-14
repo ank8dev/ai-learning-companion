@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stop_teaching_check.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

@@ -271,6 +271,22 @@ def can_teach_now(state, min_gap=DEFAULT_MIN_TEACH_GAP):
     return state.get("turns_since_last_teach", 0) >= min_gap
 
 
+def gate_status(state, min_gap=DEFAULT_MIN_TEACH_GAP):
+    """Read-only view of the teaching gate. Pure: never mutates state
+    and, unlike tick_gate, never advances turns_since_last_teach.
+
+    Same shape as update_profile.py --check's output, so a caller (the
+    Stop hook, via router.py --gate-status) can report the gate's state
+    on every turn without spending a gated check. Only --check itself
+    ticks the counter.
+    """
+    return {
+        "can_teach": can_teach_now(state, min_gap=min_gap),
+        "turns_since_last_teach": state.get("turns_since_last_teach", 0),
+        "min_gap": min_gap,
+    }
+
+
 def tick_gate(state, observed_patterns=(), today=None):
     """Advance the gate by one check. Pure: returns a new state dict,
     never mutates the input. Call this on every gated check, regardless

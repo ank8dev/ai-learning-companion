@@ -609,5 +609,120 @@ class RouterPickExplanationTierCliTest(unittest.TestCase):
         self.assertEqual(set(winner), {"track", "topic", "priority", "optional"})
 
 
+class GateStatusTest(unittest.TestCase):
+    def test_open_when_nothing_ever_taught(self):
+        self.assertEqual(
+            lib.gate_status(lib.default_state()),
+            {"can_teach": True, "turns_since_last_teach": 0, "min_gap": lib.DEFAULT_MIN_TEACH_GAP},
+        )
+
+    def test_closed_right_after_a_teach(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 0
+        status = lib.gate_status(state)
+        self.assertFalse(status["can_teach"])
+        self.assertEqual(status["turns_since_last_teach"], 0)
+
+    def test_open_once_gap_is_reached(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 3
+        self.assertTrue(lib.gate_status(state)["can_teach"])
+        state["turns_since_last_teach"] = 4
+        status = lib.gate_status(state, min_gap=5)
+        self.assertFalse(status["can_teach"])
+        self.assertEqual(status["min_gap"], 5)
+
+    def test_agrees_with_can_teach_now(self):
+        for last_taught_at in (None, "2026-01-01"):
+            for turns in range(6):
+                state = lib.default_state()
+                state["last_taught_at"] = last_taught_at
+                state["turns_since_last_teach"] = turns
+                with self.subTest(last_taught_at=last_taught_at, turns=turns):
+                    self.assertEqual(lib.gate_status(state)["can_teach"], lib.can_teach_now(state))
+
+    def test_does_not_mutate_input(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 2
+        snapshot = json.loads(json.dumps(state))
+        lib.gate_status(state)
+        lib.gate_status(state)
+        self.assertEqual(state, snapshot)
+
+
+class RouterGateStatusCliTest(unittest.TestCase):
+    """CLI-level: router.py --gate-status must never write."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="gate-status-test-")
+        self.profile = os.path.join(self._tmp, "profile.json")
+        self.router = os.path.join(os.path.dirname(os.path.abspath(__file__)), "router.py")
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _run(self, *args):
+        return subprocess.run(
+            [sys.executable, self.router, "--profile", self.profile] + list(args),
+            capture_output=True,
+            text=True,
+        )
+
+    def _write(self, state):
+        with open(self.profile, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        with open(self.profile, encoding="utf-8") as f:
+            return f.read()
+
+    def _read(self):
+        with open(self.profile, encoding="utf-8") as f:
+            return f.read()
+
+    def test_prints_gate_shape(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 1
+        self._write(state)
+        result = self._run("--gate-status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"can_teach": False, "turns_since_last_teach": 1, "min_gap": lib.DEFAULT_MIN_TEACH_GAP},
+        )
+
+    def test_does_not_create_missing_profile(self):
+        result = self._run("--gate-status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["can_teach"])
+        self.assertFalse(os.path.exists(self.profile))
+
+    def test_does_not_upgrade_old_shape_profile_on_disk(self):
+        before = self._write({"known_terms": {"x": "2026-01-01"}, "sessions_taught": 1})
+        result = self._run("--gate-status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._read(), before)
+
+    def test_does_not_advance_the_counter_on_disk(self):
+        state = lib.default_state()
+        state["last_taught_at"] = "2026-01-01"
+        state["turns_since_last_teach"] = 2
+        before = self._write(state)
+        for _ in range(3):
+            result = self._run("--gate-status")
+            self.assertEqual(json.loads(result.stdout)["turns_since_last_teach"], 2)
+        self.assertEqual(self._read(), before)
+
+    def test_rejects_combination_with_pick(self):
+        result = self._run("--gate-status", "--pick", "--candidate", "english:x")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_rejects_combination_with_check_project(self):
+        result = self._run("--gate-status", "--check-project", self._tmp)
+        self.assertNotEqual(result.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

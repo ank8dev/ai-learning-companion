@@ -15,6 +15,8 @@ Watches real AI-assisted work for a genuine teaching moment, across three tracks
 
 A deterministic cooldown and a priority rule keep this rare and ambient, not noisy: a new AI-engineering concept comes first, then a recurring English struggle, and a one-off English slip only when nothing else qualifies — and it's usually skipped even then.
 
+Checking for a moment doesn't depend on the model remembering to. After any turn that changed files or ran a non-trivial command, a Stop hook sends the model back once with a short note to check for a teaching moment, including the cooldown's current state. The hook only reads the profile; the skill's own gate check still decides whether anything is taught — the hook makes the check reliable, not the lesson.
+
 ## Project explorer
 
 A second, independent skill: a structured first-time orientation to an unfamiliar codebase — top-level folders and why, the handful of files worth reading first, anything genuinely unusual about the layout — instead of a file-by-file dump.

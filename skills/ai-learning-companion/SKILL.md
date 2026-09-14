@@ -1,6 +1,6 @@
 ---
 name: ai-learning-companion
-description: Use at the end of every turn that added, removed, or modified files, for a short Change Summary (always, even when nothing is taught). For teaching, use before running a genuinely new or important command (git, deployment, package managers, build tools), or after any moment of real AI-assisted work — not just a finished code change — where something worth explaining appeared (would explaining it help the user explain their own project to someone else?), a genuine recurring English struggle showed up, or (rarely) a one-off English slip, and the teaching-cooldown gate is open. Not for small talk, trivial commands like ls/cd/cat, cosmetic-only changes, a single minor typo, a concept already at "practiced" status, mid-task partial work, or anything still inside the cooldown gate. Those teaching exclusions never skip the Change Summary.
+description: Use at the end of every turn that added, removed, or modified files, for a short Change Summary (always, even when nothing is taught). For teaching, use before running a genuinely new or important command (git, deployment, package managers, build tools); after any moment of real AI-assisted work where something worth explaining appeared (would explaining it help the user explain their own project to someone else?), a genuine recurring English struggle showed up, or (rarely) a one-off English slip; and whenever the Stop hook asks you to check for a teaching moment. Not for small talk, trivial commands like ls/cd/cat, cosmetic-only changes, a single minor typo, or mid-task partial work. Whether anything is actually taught is decided by the skill's gate and arbitration scripts, not by this description; teaching exclusions never skip the Change Summary.
 ---
 
 # AI Learning Companion
@@ -12,6 +12,10 @@ Turns a moment of real AI-assisted work into a short teaching moment, so the dev
 ## When to Use
 
 Judge by what actually happened, not by whether a code diff exists.
+
+### When the Stop hook sends you back
+
+After a turn that changed files or ran a non-trivial command, a Stop hook adds a note asking you to check whether a teaching moment applies, with the gate's current state. That note means "run Step 2 now", not "teach something". If Step 2 finds a candidate, run Step 3's `--check` even when the note says the gate is closed: that call decides, and it is what advances the cooldown. If Step 2 finds nothing, or the gate or arbitration says no, stop without comment. If files changed and your reply has no Change Summary yet, add one. The hook won't send you back a second time from that follow-up.
 
 ### The one test (AI-engineering and prompting)
 
